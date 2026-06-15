@@ -1,6 +1,6 @@
 # Clip Board 软件架构与维护手册
 
-最后维护日期：2026-06-14
+最后维护日期：2026-06-15
 
 本文档是 Clip Board 的架构事实来源。任何影响功能、交互、数据格式、模块职责、
 快捷键、构建方式或测试范围的修改，都必须同步维护本文档，并在文末变更记录中增加一项。
@@ -68,7 +68,7 @@ flowchart LR
 | `clip_board/canvas.py` | 画布缩放、平移、背景网格、框选、文件和帧拖放 | 项目序列化 |
 | `clip_board/scene_items.py` | MediaItem、NoteItem、绘制、编辑、播放和格式 API | 文件对话框 |
 | `clip_board/panels.py` | 素材面板、帧面板、GIF 控制条、文本编辑条 | 项目写盘 |
-| `clip_board/media.py` | 素材导入、哈希去重、图片探测、GIF 逐帧读写 | UI 状态 |
+| `clip_board/media.py` | 素材导入、哈希去重、图片探测、GIF 逐帧读写与缩放导出 | UI 状态 |
 | `clip_board/models.py` | 版本化、Qt 无关的数据结构 | QWidget / QColor 等 Qt 类型 |
 | `clip_board/project_store.py` | 工作区、存档打包、读取、原子写入、自动存档 | 画布对象 |
 | `clip_board/theme.py` | 白色主题颜色和 Qt 样式表 | 业务分支 |
@@ -84,6 +84,7 @@ flowchart LR
 - `Cmd/Ctrl + 滚动` 和触控板捏合用于围绕指针缩放。
 - 左键拖拽空白处或中键拖拽用于平移。
 - `Shift + 空白拖拽` 保留为框选。
+- macOS 触控板双指辅助点按映射为 `Qt.RightButton`，由 CanvasView 直接发出右键菜单请求。
 - 点击空白处清除 Scene Selection、Note 编辑态和浮动工具栏。
 - 文件拖入触发 `files_dropped`，帧拖入触发 `frames_dropped`。
 
@@ -94,6 +95,8 @@ flowchart LR
 - 支持选中、移动、缩放、旋转字段和 Z 顺序。
 - 动图暴露播放、暂停、逐帧跳转和倍速接口。
 - 当前播放帧通过 Signal 同步到 GIF 控制条和帧面板。
+- 右键 GIF 时提供原始、75%、50% 和 25% 输出尺寸，菜单显示实际像素尺寸。
+- 分辨率复制不改变项目：媒体层生成 GIF，窗口层把 `image/gif` 数据和本地文件 URL 同时写入系统剪贴板。
 
 ### NoteItem
 
@@ -269,10 +272,12 @@ flowchart TD
 ```text
 workspace/
   assets/
+clipboard/
 autosave.clipboard
 ```
 
 - 素材按内容 SHA-256 去重。
+- `clipboard/` 保存最近一次右键复制的 GIF，确保接收应用读取剪贴板文件 URL 时文件仍然存在。
 - 正式存档从工作区复制所有项目引用素材。
 - 读取存档时先重建工作区，再解压项目。
 - 解压前校验所有 ZIP member 的目标路径，防止路径穿越。
@@ -318,6 +323,7 @@ autosave.clipboard
 ```
 
 覆盖模型往返、Schema 升级、项目打包、素材去重和 GIF 帧顺序。
+GIF 媒体测试同时覆盖缩放导出的帧尺寸和逐帧时长。
 
 ### UI Smoke
 
@@ -334,6 +340,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/smoke_ui.py
 - 首次保存弹出另存为，后续保存沿用路径
 - macOS FileOpen 事件入口
 - GIF 控制条、帧面板和工具栏避让
+- GIF 右键分辨率菜单、`image/gif` MIME、文件 URL 和缩放后帧尺寸
 - Shift 选帧、复制、插帧、删除和重排
 - 项目保存与重新加载
 
@@ -374,6 +381,16 @@ plutil -p "$HOME/Applications/Clip Board.app/Contents/Info.plist"
 此规则同时写入根目录 `AGENTS.md`，供后续开发和自动化代理读取。
 
 ## 16. 变更记录
+
+### 2026-06-15
+
+- 修复 macOS 触控板双指辅助点按未弹出 GIF 菜单：CanvasView 直接处理右键按压。
+- UI Smoke 增加真实右键鼠标事件验证，不再只调用菜单构建函数。
+- GIF 右键菜单增加“Copy GIF to Clipboard”子菜单，提供原始、75%、50% 和 25% 分辨率。
+- 复制结果同时提供 `image/gif` 数据和持久本地文件 URL，可直接粘贴到外部应用。
+- GIF 缩放编码集中到 `clip_board/media.py`，不在 Widget 内处理帧。
+- 单元测试覆盖缩放后的帧尺寸和时长，UI Smoke 覆盖菜单选项与系统剪贴板内容。
+- 验证范围：单元测试、真实右键事件离屏 UI Smoke、PyInstaller 构建、codesign 和安装包启动。
 
 ### 2026-06-14
 

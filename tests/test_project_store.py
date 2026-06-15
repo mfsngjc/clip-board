@@ -7,7 +7,9 @@ from PIL import Image
 from clip_board.media import (
     AnimationFrame,
     AssetLibrary,
+    export_animation_gif,
     read_animation_frames,
+    save_animation_frames,
 )
 from clip_board.models import BoardItemModel, ProjectModel, new_id
 from clip_board.project_store import ProjectStore
@@ -87,6 +89,25 @@ class ProjectStoreTests(unittest.TestCase):
                 [frame.image.getpixel((0, 0))[:3] for frame in loaded],
                 [(49, 130, 206), (229, 62, 62), (56, 161, 105)],
             )
+
+    def test_export_animation_gif_resizes_all_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.gif"
+            destination = root / "clipboard" / "scaled.gif"
+            frames = [
+                AnimationFrame(Image.new("RGBA", (80, 40), color), duration)
+                for color, duration in (
+                    ("#E53E3E", 90),
+                    ("#3182CE", 150),
+                )
+            ]
+            save_animation_frames(frames, source)
+            export_animation_gif(source, destination, (40, 20))
+            loaded = read_animation_frames(destination)
+
+            self.assertEqual([frame.image.size for frame in loaded], [(40, 20)] * 2)
+            self.assertEqual([frame.duration_ms for frame in loaded], [90, 150])
 
 
 if __name__ == "__main__":

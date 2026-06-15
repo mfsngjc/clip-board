@@ -119,6 +119,25 @@ def save_animation_frames(
     )
 
 
+def export_animation_gif(
+    source: Path,
+    destination: Path,
+    target_size: Optional[tuple[int, int]] = None,
+) -> None:
+    source = source.expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if target_size is None and source.suffix.lower() == ".gif":
+        shutil.copy2(source, destination)
+        return
+    if target_size is not None and (target_size[0] < 1 or target_size[1] < 1):
+        raise ValueError("GIF export dimensions must be positive.")
+    save_animation_frames(
+        read_animation_frames(source),
+        destination,
+        target_size,
+    )
+
+
 class AssetLibrary:
     def __init__(self, assets_dir: Path) -> None:
         self.assets_dir = assets_dir

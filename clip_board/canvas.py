@@ -34,6 +34,7 @@ class CanvasView(QGraphicsView):
     files_dropped = Signal(list, QPointF)
     frames_dropped = Signal(QPointF)
     zoom_changed = Signal(float)
+    context_menu_requested = Signal(QPoint)
 
     def __init__(self, scene: BoardScene) -> None:
         super().__init__(scene)
@@ -171,6 +172,10 @@ class CanvasView(QGraphicsView):
         event.accept()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.RightButton:
+            self.context_menu_requested.emit(event.position().toPoint())
+            event.accept()
+            return
         left_on_empty = (
             event.button() == Qt.LeftButton
             and self.itemAt(event.position().toPoint()) is None

@@ -6,7 +6,16 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, Optional
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QStandardPaths, Qt, QTimer
+from PySide6.QtCore import (
+    QMimeData,
+    QPoint,
+    QPointF,
+    QRect,
+    QStandardPaths,
+    Qt,
+    QTimer,
+    QUrl,
+)
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -36,7 +45,12 @@ from .constants import (
     PROJECT_SUFFIX,
     SUPPORTED_IMAGE_SUFFIXES,
 )
-from .media import AnimationFrame, AssetLibrary, read_animation_frames
+from .media import (
+    AnimationFrame,
+    AssetLibrary,
+    export_animation_gif,
+    read_animation_frames,
+)
 from .models import BoardItemModel, ClipModel, ProjectModel, new_id
 from .panels import AssetPanel, GifControlBar, NoteTextToolbar, TimelinePanel
 from .project_store import ProjectStore
@@ -391,8 +405,8 @@ class MainWindow(QMainWindow):
         self.canvas.files_dropped.connect(self.import_files)
         self.canvas.frames_dropped.connect(self.drop_copied_frames)
         self.canvas.zoom_changed.connect(self._zoom_changed)
-        self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.canvas.customContextMenuRequested.connect(self._show_canvas_menu)
+        self.canvas.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.canvas.context_menu_requested.connect(self._show_canvas_menu)
         self.scene.selectionChanged.connect(self._selection_changed)
         self.asset_panel.asset_activated.connect(self.add_asset_to_board)
         self.note_controls.alignment_changed.connect(
@@ -770,6 +784,66 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Copied {len(frames)} frame{'s' if len(frames) != 1 else ''}",
             2500,
+        )
+
+    @staticmethod
+    def _gif_copy_options(
+        item: MediaItem,
+    ) -> list[tuple[str, Optional[tuple[int, int]]]]:
+        source_width = max(1, item.asset.width)
+        source_height = max(1, item.asset.height)
+        options = []
+        seen_sizes = set()
+        for scale in (1.0, 0.75, 0.5, 0.25):
+            size = (
+                max(1, round(source_width * scale)),
+                max(1, round(source_height * scale)),
+            )
+            if size in seen_sizes:
+                continue
+            seen_sizes.add(size)
+            scale_label = "Original" if scale == 1.0 else f"{scale * 100:g}%"
+            target_size = None if scale == 1.0 else size
+            options.append((f"{scale_label} ({size[0]} × {size[1]})", target_size))
+        return options
+
+    def copy_gif_to_clipboard(
+        self,
+        item: MediaItem,
+        target_size: Optional[tuple[int, int]] = None,
+    ) -> None:
+        if not item.is_animated:
+            return
+        output_width, output_height = target_size or (
+            max(1, item.asset.width),
+            max(1, item.asset.height),
+        )
+        clipboard_dir = self.store.data_root / "clipboard"
+        clipboard_dir.mkdir(parents=True, exist_ok=True)
+        destination = clipboard_dir / (
+            f"Clip Board GIF {output_width}x{output_height}.gif"
+        )
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            export_animation_gif(item.source_path, destination, target_size)
+            gif_data = destination.read_bytes()
+        except Exception as exc:
+            self._show_error("Could not copy GIF", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        for candidate in clipboard_dir.glob("*.gif"):
+            if candidate != destination:
+                candidate.unlink(missing_ok=True)
+
+        mime = QMimeData()
+        mime.setData("image/gif", gif_data)
+        mime.setUrls([QUrl.fromLocalFile(str(destination))])
+        QApplication.clipboard().setMimeData(mime)
+        self.statusBar().showMessage(
+            f"Copied GIF at {output_width} × {output_height}",
+            3000,
         )
 
     def prepare_frame_drag(self, indices: object) -> None:
@@ -1320,7 +1394,7 @@ class MainWindow(QMainWindow):
         percentage = f"{zoom * 100:.0f}%"
         self.statusBar().showMessage(f"Zoom {percentage}", 1200)
 
-    def _show_canvas_menu(self, viewport_position) -> None:  # type: ignore[no-untyped-def]
+    def _build_canvas_menu(self, viewport_position) -> QMenu:  # type: ignore[no-untyped-def]
         item = self.canvas.itemAt(viewport_position)
         if item is not None and not item.isSelected():
             self.scene.clearSelection()
@@ -1328,8 +1402,22 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction(self.import_action)
         menu.addAction(self.note_action)
+        if isinstance(item, MediaItem) and item.is_animated:
+            copy_menu = QMenu("Copy GIF to Clipboard", menu)
+            menu.addMenu(copy_menu)
+            for label, target_size in self._gif_copy_options(item):
+                action = copy_menu.addAction(label)
+                action.triggered.connect(
+                    lambda checked=False, selected=item, size=target_size: (
+                        self.copy_gif_to_clipboard(selected, size)
+                    )
+                )
         if self.scene.selectedItems():
             menu.addAction(self.delete_action)
+        return menu
+
+    def _show_canvas_menu(self, viewport_position) -> None:  # type: ignore[no-untyped-def]
+        menu = self._build_canvas_menu(viewport_position)
         menu.exec(self.canvas.viewport().mapToGlobal(viewport_position))
 
     def _set_frame_panel_expanded(self, expanded: bool) -> None:

@@ -27,7 +27,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QTextCursor,
 )
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QApplication,
     QColorDialog,
@@ -433,6 +433,47 @@ def main() -> int:
     assert animated.playback_rate == 0.5
     assert window.gif_controls.speed_button.text() == "0.5×"
     window.set_selected_speed(1.0)
+
+    gif_position = window.canvas.mapFromScene(
+        animated.mapToScene(animated.boundingRect().center())
+    )
+    window.canvas.context_menu_requested.disconnect(window._show_canvas_menu)
+    context_menu_spy = QSignalSpy(window.canvas.context_menu_requested)
+    QTest.mousePress(
+        window.canvas.viewport(),
+        Qt.RightButton,
+        pos=gif_position,
+    )
+    app.processEvents()
+    assert context_menu_spy.count() == 1
+    assert context_menu_spy.at(0)[0] == gif_position
+    window.canvas.context_menu_requested.connect(window._show_canvas_menu)
+
+    gif_menu = window._build_canvas_menu(gif_position)
+    copy_menu_action = next(
+        action
+        for action in gif_menu.actions()
+        if action.text() == "Copy GIF to Clipboard"
+    )
+    copy_menu = copy_menu_action.menu()
+    assert copy_menu is not None
+    assert [action.text() for action in copy_menu.actions()] == [
+        "Original (320 × 180)",
+        "75% (240 × 135)",
+        "50% (160 × 90)",
+        "25% (80 × 45)",
+    ]
+    copy_menu.actions()[2].trigger()
+    app.processEvents()
+    clipboard_mime = app.clipboard().mimeData()
+    assert clipboard_mime.hasFormat("image/gif")
+    clipboard_urls = clipboard_mime.urls()
+    assert len(clipboard_urls) == 1
+    clipboard_gif = Path(clipboard_urls[0].toLocalFile())
+    assert clipboard_gif.exists()
+    with Image.open(clipboard_gif) as copied_image:
+        assert copied_image.size == (160, 90)
+        assert copied_image.n_frames == 3
 
     assert window.grab().save(str(output / "gif-frames-expanded.png"))
 
